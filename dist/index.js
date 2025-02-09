@@ -1,3 +1,7 @@
+// src/index.ts
+import path from "path";
+import fs from "fs";
+
 // src/sqliteTables.ts
 var sqliteTables = `
 PRAGMA foreign_keys=OFF;
@@ -152,6 +156,7 @@ import {
   elizaLogger as elizaLogger2
 } from "@elizaos/core";
 import { v4 } from "uuid";
+import Database from "better-sqlite3";
 var SqliteDatabaseAdapter = class extends DatabaseAdapter {
   async getRoom(roomId) {
     const sql = "SELECT id FROM rooms WHERE id = ?";
@@ -177,7 +182,7 @@ var SqliteDatabaseAdapter = class extends DatabaseAdapter {
       "SELECT userState FROM participants WHERE roomId = ? AND userId = ?"
     );
     const res = stmt.get(roomId, userId);
-    return res?.userState ?? null;
+    return (res == null ? void 0 : res.userState) ?? null;
   }
   async setParticipantUserState(roomId, userId, state) {
     const stmt = this.db.prepare(
@@ -298,6 +303,7 @@ var SqliteDatabaseAdapter = class extends DatabaseAdapter {
     }));
   }
   async createMemory(memory, tableName) {
+    var _a;
     let isUnique = true;
     if (memory.embedding) {
       const similarMemories = await this.searchMemoriesByEmbedding(
@@ -316,7 +322,7 @@ var SqliteDatabaseAdapter = class extends DatabaseAdapter {
     const content = JSON.stringify(memory.content);
     const createdAt = memory.createdAt ?? Date.now();
     let embeddingValue = new Float32Array(384);
-    if (memory?.embedding && memory?.embedding?.length > 0) {
+    if ((memory == null ? void 0 : memory.embedding) && ((_a = memory == null ? void 0 : memory.embedding) == null ? void 0 : _a.length) > 0) {
       embeddingValue = new Float32Array(memory.embedding);
     }
     const sql = `INSERT OR REPLACE INTO memories (id, type, content, embedding, userId, roomId, agentId, \`unique\`, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
@@ -620,7 +626,7 @@ var SqliteDatabaseAdapter = class extends DatabaseAdapter {
   async getCache(params) {
     const sql = "SELECT value FROM cache WHERE (key = ? AND agentId = ?)";
     const cached = this.db.prepare(sql).get(params.key, params.agentId);
-    return cached?.value ?? void 0;
+    return (cached == null ? void 0 : cached.value) ?? void 0;
   }
   async setCache(params) {
     const sql = "INSERT OR REPLACE INTO cache (key, agentId, value, createdAt) VALUES (?, ?, ?, CURRENT_TIMESTAMP)";
@@ -658,6 +664,7 @@ var SqliteDatabaseAdapter = class extends DatabaseAdapter {
     }));
   }
   async searchKnowledge(params) {
+    var _a;
     const cacheKey = `embedding_${params.agentId}_${params.searchText}`;
     const cachedResult = await this.getCache({
       key: cacheKey,
@@ -706,7 +713,7 @@ var SqliteDatabaseAdapter = class extends DatabaseAdapter {
     const searchParams = [
       params.embedding,
       params.agentId,
-      `%${params.searchText?.toLowerCase() || ""}%`,
+      `%${((_a = params.searchText) == null ? void 0 : _a.toLowerCase()) || ""}%`,
       params.agentId,
       params.agentId,
       params.match_threshold,
@@ -734,6 +741,7 @@ var SqliteDatabaseAdapter = class extends DatabaseAdapter {
     }
   }
   async createKnowledge(knowledge) {
+    var _a, _b, _c;
     try {
       this.db.transaction(() => {
         const sql = `
@@ -758,17 +766,17 @@ var SqliteDatabaseAdapter = class extends DatabaseAdapter {
         );
       })();
     } catch (error) {
-      const isShared = knowledge.content.metadata?.isShared;
-      const isPrimaryKeyError = error?.code === "SQLITE_CONSTRAINT_PRIMARYKEY";
+      const isShared = (_a = knowledge.content.metadata) == null ? void 0 : _a.isShared;
+      const isPrimaryKeyError = (error == null ? void 0 : error.code) === "SQLITE_CONSTRAINT_PRIMARYKEY";
       if (isShared && isPrimaryKeyError) {
         elizaLogger2.info(
           `Shared knowledge ${knowledge.id} already exists, skipping`
         );
         return;
-      } else if (!isShared && !error.message?.includes("SQLITE_CONSTRAINT_PRIMARYKEY")) {
+      } else if (!isShared && !((_b = error.message) == null ? void 0 : _b.includes("SQLITE_CONSTRAINT_PRIMARYKEY"))) {
         elizaLogger2.error(`Error creating knowledge ${knowledge.id}:`, {
           error,
-          embeddingLength: knowledge.embedding?.length,
+          embeddingLength: (_c = knowledge.embedding) == null ? void 0 : _c.length,
           content: knowledge.content
         });
         throw error;
@@ -805,7 +813,7 @@ var SqliteDatabaseAdapter = class extends DatabaseAdapter {
           const mainEntry = this.db.prepare(selectSql).get(id);
           const chunks = this.db.prepare(chunkSql).all(id);
           elizaLogger2.debug(`[Knowledge Remove] Found:`, {
-            mainEntryExists: !!mainEntry?.id,
+            mainEntryExists: !!(mainEntry == null ? void 0 : mainEntry.id),
             chunkCount: chunks.length,
             chunkIds: chunks.map((c) => c.id)
           });
@@ -869,8 +877,33 @@ var SqliteDatabaseAdapter = class extends DatabaseAdapter {
     }
   }
 };
+var sqliteDatabaseAdapter = {
+  init: (runtime) => {
+    const dataDir = path.join(process.cwd(), "data");
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+    const filePath = runtime.getSetting("SQLITE_FILE") ?? path.resolve(dataDir, "db.sqlite");
+    elizaLogger2.info(`Initializing SQLite database at ${filePath}...`);
+    const db = new SqliteDatabaseAdapter(new Database(filePath));
+    db.init().then(() => {
+      elizaLogger2.success(
+        "Successfully connected to SQLite database"
+      );
+    }).catch((error) => {
+      elizaLogger2.error("Failed to connect to SQLite:", error);
+    });
+    return db;
+  }
+};
+var sqlitePlugin = {
+  name: "sqlite",
+  description: "SQLite database adapter plugin",
+  adapters: [sqliteDatabaseAdapter]
+};
+var index_default = sqlitePlugin;
 export {
-  SqliteDatabaseAdapter,
+  index_default as default,
   load2 as load,
   loadVecExtensions,
   sqliteTables
